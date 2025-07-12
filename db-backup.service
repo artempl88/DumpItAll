@@ -1,6 +1,6 @@
 [Unit]
-Description=Database Backup Service
-After=network.target
+Description=DumpItAll Database Backup Service
+After=network.target docker.service
 Wants=network.target
 
 [Service]
