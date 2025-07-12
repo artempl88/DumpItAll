@@ -1227,19 +1227,23 @@ class UniversalBackup:
         
         env_mappings = {
             'postgresql': {
-                'user': ['POSTGRES_USER', 'POSTGRESQL_USER'],
-                'password': ['POSTGRES_PASSWORD', 'POSTGRESQL_PASSWORD'],
-                'database': ['POSTGRES_DB', 'POSTGRESQL_DATABASE']
+                'user': ['PGUSER', 'POSTGRES_USER', 'POSTGRESQL_USER', 'DB_USER'],
+                'password': ['PGPASSWORD', 'POSTGRES_PASSWORD', 'POSTGRESQL_PASSWORD', 'DB_PASSWORD'],
+                'database': ['PGDATABASE', 'POSTGRES_DB', 'POSTGRESQL_DATABASE', 'DB_NAME'],
+                'host': ['PGHOST', 'POSTGRES_HOST', 'DB_HOST']
             },
             'mysql': {
-                'user': ['MYSQL_USER', 'MARIADB_USER'],
-                'password': ['MYSQL_PASSWORD', 'MARIADB_PASSWORD', 'MYSQL_ROOT_PASSWORD'],
-                'database': ['MYSQL_DATABASE', 'MARIADB_DATABASE']
+                'user': ['MYSQL_USER', 'MARIADB_USER', 'DB_USER'],
+                'password': ['MYSQL_PASSWORD', 'MARIADB_PASSWORD', 'MYSQL_ROOT_PASSWORD', 'DB_PASSWORD'],
+                'database': ['MYSQL_DATABASE', 'MARIADB_DATABASE', 'DB_NAME']
             },
             'mongodb': {
-                'user': ['MONGO_INITDB_ROOT_USERNAME'],
-                'password': ['MONGO_INITDB_ROOT_PASSWORD'],
-                'database': ['MONGO_INITDB_DATABASE']
+                'user': ['MONGO_INITDB_ROOT_USERNAME', 'MONGO_USER', 'MONGODB_USER'],
+                'password': ['MONGO_INITDB_ROOT_PASSWORD', 'MONGO_PASSWORD', 'MONGODB_PASSWORD'],
+                'database': ['MONGO_INITDB_DATABASE', 'MONGO_DB', 'MONGODB_DATABASE']
+            },
+            'redis': {
+                'password': ['REDIS_PASSWORD', 'REDIS_AUTH', 'REDIS_REQUIREPASS']
             }
         }
         
@@ -1250,6 +1254,18 @@ class UniversalBackup:
                     if env_key in env_vars:
                         credentials[cred_type] = env_vars[env_key]
                         break
+        
+        # Специальная обработка для Seedance PostgreSQL
+        if db_type == 'postgresql':
+            # Если найдены переменные PGUSER/PGPASSWORD, используем их
+            if 'PGUSER' in env_vars:
+                credentials['user'] = env_vars['PGUSER']
+            if 'PGPASSWORD' in env_vars:
+                credentials['password'] = env_vars['PGPASSWORD']
+            if 'PGDATABASE' in env_vars:
+                credentials['database'] = env_vars['PGDATABASE']
+            if 'PGHOST' in env_vars:
+                credentials['host'] = env_vars['PGHOST']
         
         return credentials
 
@@ -1455,8 +1471,23 @@ class UniversalBackup:
         
         try:
             if db_type == 'postgresql':
-                cmd = ['psql', '-U', credentials.get('user', 'postgres'), '-l', '-t', '--no-password']
-                env = {'PGPASSWORD': credentials.get('password', '')} if credentials.get('password') else {}
+                # Для Seedance используем специфичные параметры
+                if 'seedance' in container.name.lower():
+                    host = 'postgres'  # имя сервиса в docker network
+                    user = credentials.get('user', 'seedance')
+                    password = credentials.get('password', 'RagnarLothbrok2021!')
+                else:
+                    host = credentials.get('host', 'postgres')
+                    user = credentials.get('user', 'postgres')
+                    password = credentials.get('password', '')
+                
+                cmd = ['psql', '-h', host, '-U', user, '-l', '-t', '--no-password']
+                env = {}
+                if password:
+                    env['PGPASSWORD'] = password
+                    
+                result = container.exec_run(cmd, environment=env)
+                
             elif db_type == 'mysql':
                 user = credentials.get('user', 'root')
                 password = credentials.get('password', '')
@@ -1465,6 +1496,8 @@ class UniversalBackup:
                 else:
                     cmd = ['mysql', '-u', user, '-e', 'SHOW DATABASES;']
                 env = {}
+                result = container.exec_run(cmd, environment=env)
+                
             elif db_type == 'mongodb':
                 user = credentials.get('user', 'admin')
                 password = credentials.get('password', '')
@@ -1475,6 +1508,8 @@ class UniversalBackup:
                     cmd = ['mongo', '--eval', 
                            'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', '--quiet']
                 env = {}
+                result = container.exec_run(cmd, environment=env)
+                
             elif db_type == 'redis':
                 password = credentials.get('password', '')
                 if password:
@@ -1482,10 +1517,10 @@ class UniversalBackup:
                 else:
                     cmd = ['redis-cli', 'INFO', 'keyspace']
                 env = {}
+                result = container.exec_run(cmd, environment=env)
             else:
                 return []
             
-            result = container.exec_run(cmd, environment=env)
             if result.exit_code == 0:
                 output = result.output.decode('utf-8')
                 
@@ -1493,7 +1528,7 @@ class UniversalBackup:
                     for line in output.split('\n'):
                         if '|' in line:
                             db_name = line.split('|')[0].strip()
-                            if db_name and db_name not in ['template0', 'template1']:
+                            if db_name and db_name not in ['template0', 'template1', '']:
                                 databases.append(db_name)
                 
                 elif db_type == 'mysql':
@@ -1513,9 +1548,15 @@ class UniversalBackup:
                     databases.append('redis_db')
             else:
                 logging.warning(f"Не удалось получить список БД в контейнере {container.name}: {result.output.decode('utf-8')}")
+                # Для Seedance PostgreSQL добавляем известные базы данных как fallback
+                if db_type == 'postgresql' and 'seedance' in container.name.lower():
+                    databases = ['seedance_bot', 'postgres']
                             
         except Exception as e:
             logging.warning(f"Не удалось получить список БД в контейнере {container.name}: {e}")
+            # Fallback для известных контейнеров
+            if db_type == 'postgresql' and 'seedance' in container.name.lower():
+                databases = ['seedance_bot', 'postgres']
         
         return databases
 
@@ -2292,16 +2333,28 @@ class UniversalBackup:
                         backup_file = f"docker_pg_{db_info['container_name']}_{database}_{timestamp}.sql"
                         backup_path = os.path.join(self.BACKUP_DIR, backup_file)
                         
+                        # Для Seedance используем правильные учетные данные
+                        if 'seedance' in db_info['container_name'].lower():
+                            user = 'seedance'
+                            password = 'RagnarLothbrok2021!'
+                            host = 'postgres'  # имя сервиса в docker network
+                        else:
+                            user = credentials.get('user', 'postgres')
+                            password = credentials.get('password', '')
+                            host = credentials.get('host', 'postgres')
+                        
                         cmd = [
                             'pg_dump',
-                            '-U', credentials.get('user', 'postgres'),
+                            '-h', host,
+                            '-U', user,
                             '--format=custom',
+                            '--no-password',
                             database
                         ]
                         
                         env = {}
-                        if credentials.get('password'):
-                            env['PGPASSWORD'] = credentials['password']
+                        if password:
+                            env['PGPASSWORD'] = password
                         
                     elif db_info['type'] == 'mysql':
                         backup_file = f"docker_mysql_{db_info['container_name']}_{database}_{timestamp}.sql"
@@ -2318,7 +2371,7 @@ class UniversalBackup:
                         
                         env = {}
                         if credentials.get('password'):
-                            cmd.append(f"-p{credentials['password']}")
+                            cmd.insert(-1, f"-p{credentials['password']}")
                     
                     elif db_info['type'] == 'mongodb':
                         backup_file = f"docker_mongo_{db_info['container_name']}_{database}_{timestamp}.archive"
@@ -2331,24 +2384,73 @@ class UniversalBackup:
                         ]
                         env = {}
                     
-                    # Выполнение команды в контейнере
-                    result = container.exec_run(cmd, environment=env)
+                    elif db_info['type'] == 'redis':
+                        backup_file = f"docker_redis_{db_info['container_name']}_{database}_{timestamp}.rdb"
+                        backup_path = os.path.join(self.BACKUP_DIR, backup_file)
+                        
+                        # ИСПРАВЛЕНИЕ: Инициализируем cmd для Redis
+                        cmd = ['redis-cli']
+                        
+                        env = {}
+                        password = credentials.get('password', '')
+                        if password:
+                            cmd.extend(['-a', password])
+                        
+                        cmd.append('BGSAVE')
+                        
+                        # Выполняем BGSAVE
+                        result = container.exec_run(cmd, environment=env)
+                        
+                        if result.exit_code == 0:
+                            # Ждем завершения BGSAVE
+                            import time
+                            time.sleep(3)
+                            
+                            # Копируем dump.rdb файл из контейнера
+                            possible_paths = ['/data/dump.rdb', '/var/lib/redis/dump.rdb', '/dump.rdb']
+                            
+                            for rdb_path in possible_paths:
+                                copy_cmd = ['cat', rdb_path]
+                                result = container.exec_run(copy_cmd)
+                                
+                                if result.exit_code == 0:
+                                    with open(backup_path, 'wb') as f:
+                                        f.write(result.output)
+                                    logging.info(f"Создана резервная копия Docker Redis: {backup_path}")
+                                    backups.append(backup_path)
+                                    break
+                            else:
+                                logging.error(f"Не удалось найти dump.rdb в контейнере Redis")
+                        else:
+                            logging.error(f"Ошибка BGSAVE в Redis: {result.output.decode()}")
+                        
+                        continue  # Пропускаем общий exec_run ниже для Redis
                     
-                    if result.exit_code == 0:
-                        # Сохранение результата в файл
-                        with open(backup_path, 'wb') as f:
-                            f.write(result.output)
-                        
-                        logging.info(f"Создана резервная копия Docker: {backup_path}")
-                        backups.append(backup_path)
                     else:
-                        logging.error(f"Ошибка создания резервной копии Docker {database}: {result.output.decode()}")
+                        logging.warning(f"Неподдерживаемый тип БД: {db_info['type']}")
+                        continue
+                    
+                    # Выполнение команды в контейнере (для всех кроме Redis)
+                    if db_info['type'] != 'redis':
+                        result = container.exec_run(cmd, environment=env)
                         
+                        if result.exit_code == 0:
+                            # Сохранение результата в файл
+                            with open(backup_path, 'wb') as f:
+                                f.write(result.output)
+                            
+                            logging.info(f"Создана резервная копия Docker: {backup_path}")
+                            backups.append(backup_path)
+                        else:
+                            logging.error(f"Ошибка создания резервной копии Docker {database}: {result.output.decode()}")
+                            
                 except Exception as e:
                     logging.error(f"Ошибка резервного копирования Docker {database}: {e}")
+                    import traceback
+                    logging.error(traceback.format_exc())
                     
         except Exception as e:
-            logging.error(f"Ошибка работы с контейнером {db_info['container_name']}: {e}")
+            logging.error(f"Ошибка работы с контейнером {db_info.get('container_name', 'unknown')}: {e}")
         
         return backups
 
