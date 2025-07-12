@@ -174,6 +174,456 @@ class UniversalBackup:
             logging.warning(f"Docker недоступен: {e}")
             return None
 
+    def auto_discover_credentials(self):
+        """Автоматическое обнаружение учетных данных из всех .env файлов на VPS"""
+        credentials = {}
+        found_files = []
+        
+        # Расширенный список паттернов для поиска .env файлов
+        env_patterns = [
+            '.env', '.env.*', '*.env',
+            'env', 'env.*',
+            '.environment', '*.environment',
+            'config.env', 'config/*.env',
+            'docker-compose.yml', 'docker-compose.yaml',
+            'database.yml', 'database.yaml',
+            'config.yml', 'config.yaml',
+            'settings.py', 'settings.ini',
+            'wp-config.php', 'configuration.php'
+        ]
+        
+        # Директории для поиска .env файлов по всему VPS
+        search_dirs = [
+            '.', # Текущая директория
+            '/home/*', '/home/*/*', '/home/*/*/*', # Домашние директории
+            '/var/www/*', '/var/www/*/*', '/var/www/*/*/*', # Web директории
+            '/opt/*', '/opt/*/*', # Приложения
+            '/etc', '/etc/*', # Системные конфиги
+            '/usr/local/*', '/usr/local/*/*', # Локальные приложения
+            '/srv/*', '/srv/*/*', # Сервисы
+            '/app', '/app/*', # Docker приложения
+            '/data/*', '/data/*/*' # Данные приложений
+        ]
+        
+        logging.info("🔍 Поиск конфигурационных файлов по всему VPS...")
+        
+        # Поиск файлов
+        for search_dir in search_dirs:
+            for pattern in env_patterns:
+                try:
+                    # Используем glob для поиска с wildcards
+                    import glob
+                    search_path = os.path.join(search_dir, pattern) if search_dir != '.' else pattern
+                    
+                    for file_path in glob.glob(search_path, recursive=True):
+                        if os.path.isfile(file_path) and file_path not in found_files:
+                            found_files.append(file_path)
+                            
+                except Exception as e:
+                    continue
+        
+        logging.info(f"📄 Найдено {len(found_files)} конфигурационных файлов")
+        
+        # Парсинг найденных файлов
+        for file_path in found_files:
+            try:
+                # Определяем тип файла
+                file_ext = os.path.splitext(file_path)[1].lower()
+                file_name = os.path.basename(file_path).lower()
+                
+                # Парсим в зависимости от типа файла
+                if 'docker-compose' in file_name and file_ext in ['.yml', '.yaml']:
+                    self._parse_docker_compose(file_path, credentials)
+                elif file_ext in ['.yml', '.yaml']:
+                    self._parse_yaml_config(file_path, credentials)
+                elif file_ext == '.php':
+                    self._parse_php_config(file_path, credentials)
+                elif file_ext == '.py':
+                    self._parse_python_config(file_path, credentials)
+                elif file_ext in ['.ini', '.cfg', '.conf']:
+                    self._parse_ini_config(file_path, credentials)
+                else:
+                    # Парсим как .env файл
+                    self._parse_env_file(file_path, credentials)
+                    
+            except Exception as e:
+                logging.debug(f"Ошибка парсинга {file_path}: {e}")
+        
+        # Также проверяем переменные окружения системы
+        self._parse_system_env(credentials)
+        
+        return credentials
+    
+    def _parse_env_file(self, file_path, credentials):
+        """Парсинг .env файла"""
+        try:
+            # Попробуем разные кодировки
+            encodings = ['utf-8-sig', 'utf-8', 'cp1251', 'latin-1', 'iso-8859-1']
+            content = None
+            
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        content = f.read()
+                        # Удаляем BOM если он есть
+                        content = content.lstrip('\ufeff')
+                        break
+                except UnicodeDecodeError:
+                    continue
+            
+            if content is None:
+                return
+            
+            logging.debug(f"📄 Парсинг файла: {file_path}")
+            
+            # Расширенные паттерны для поиска credentials
+            db_patterns = {
+                'postgresql': {
+                    'password': ['POSTGRES_PASSWORD', 'PGPASSWORD', 'DB_PASSWORD', 'DATABASE_PASSWORD', 
+                                'PG_PASSWORD', 'POSTGRESQL_PASSWORD', 'DB_PASS', 'PG_PASS'],
+                    'user': ['POSTGRES_USER', 'PGUSER', 'DB_USER', 'DATABASE_USER', 
+                            'PG_USER', 'POSTGRESQL_USER', 'DB_USERNAME'],
+                    'host': ['POSTGRES_HOST', 'PGHOST', 'DB_HOST', 'DATABASE_HOST', 
+                            'PG_HOST', 'POSTGRESQL_HOST'],
+                    'port': ['POSTGRES_PORT', 'PGPORT', 'DB_PORT', 'DATABASE_PORT', 
+                            'PG_PORT', 'POSTGRESQL_PORT'],
+                    'database': ['POSTGRES_DB', 'PGDATABASE', 'DB_NAME', 'DATABASE_NAME', 
+                                'PG_DATABASE', 'POSTGRESQL_DATABASE']
+                },
+                'mysql': {
+                    'password': ['MYSQL_PASSWORD', 'MYSQL_ROOT_PASSWORD', 'MYSQL_PASS', 
+                                'MARIADB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'DB_PASSWORD',
+                                'DATABASE_PASSWORD', 'MYSQL_PWD'],
+                    'user': ['MYSQL_USER', 'MYSQL_ROOT_USER', 'MARIADB_USER', 
+                            'DB_USER', 'DATABASE_USER', 'MYSQL_USERNAME'],
+                    'host': ['MYSQL_HOST', 'MARIADB_HOST', 'DB_HOST', 'DATABASE_HOST'],
+                    'port': ['MYSQL_PORT', 'MARIADB_PORT', 'DB_PORT', 'DATABASE_PORT'],
+                    'database': ['MYSQL_DATABASE', 'MARIADB_DATABASE', 'DB_NAME', 'DATABASE_NAME']
+                },
+                'mongodb': {
+                    'password': ['MONGO_PASSWORD', 'MONGODB_PASSWORD', 'MONGO_PASS', 
+                                'MONGO_INITDB_ROOT_PASSWORD', 'MONGODB_ROOT_PASSWORD',
+                                'DB_PASSWORD', 'DATABASE_PASSWORD'],
+                    'user': ['MONGO_USER', 'MONGODB_USER', 'MONGO_USERNAME',
+                            'MONGO_INITDB_ROOT_USERNAME', 'MONGODB_ROOT_USER',
+                            'DB_USER', 'DATABASE_USER'],
+                    'host': ['MONGO_HOST', 'MONGODB_HOST', 'MONGO_URL', 'MONGODB_URL',
+                            'DB_HOST', 'DATABASE_HOST'],
+                    'port': ['MONGO_PORT', 'MONGODB_PORT', 'DB_PORT', 'DATABASE_PORT'],
+                    'database': ['MONGO_DB', 'MONGODB_DB', 'MONGO_DATABASE', 'MONGODB_DATABASE',
+                                'DB_NAME', 'DATABASE_NAME']
+                },
+                'redis': {
+                    'password': ['REDIS_PASSWORD', 'REDIS_PASS', 'REDIS_AUTH', 
+                                'REDIS_REQUIREPASS', 'CACHE_PASSWORD'],
+                    'host': ['REDIS_HOST', 'REDIS_URL', 'CACHE_HOST'],
+                    'port': ['REDIS_PORT', 'CACHE_PORT']
+                }
+            }
+            
+            # Парсинг строк
+            for line in content.split('\n'):
+                line = line.strip()
+                
+                # Пропускаем комментарии и пустые строки
+                if not line or line.startswith('#') or line.startswith('//'):
+                    continue
+                
+                # Ищем пары ключ=значение
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip().upper()
+                    value = value.strip().strip('"\'`')
+                    
+                    # Пропускаем пустые значения
+                    if not value:
+                        continue
+                    
+                    # Проверяем для каждого типа БД
+                    for db_type, patterns in db_patterns.items():
+                        for cred_type, pattern_list in patterns.items():
+                            if key in pattern_list:
+                                credentials.setdefault(db_type, {})[cred_type] = value
+                                logging.debug(f"✅ Найден {cred_type} для {db_type}: {key} в {file_path}")
+                                
+                    # Также проверяем на connection strings
+                    if 'DATABASE_URL' in key or 'DB_URL' in key or 'CONNECTION_STRING' in key:
+                        self._parse_connection_string(value, credentials)
+                        
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга env файла {file_path}: {e}")
+    
+    def _parse_connection_string(self, conn_str, credentials):
+        """Парсинг connection string"""
+        try:
+            # PostgreSQL: postgresql://user:password@host:port/database
+            if 'postgresql://' in conn_str or 'postgres://' in conn_str:
+                import re
+                match = re.match(r'postgres(?:ql)?://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', conn_str)
+                if match:
+                    credentials.setdefault('postgresql', {}).update({
+                        'user': match.group(1),
+                        'password': match.group(2),
+                        'host': match.group(3),
+                        'port': match.group(4),
+                        'database': match.group(5)
+                    })
+                    
+            # MySQL: mysql://user:password@host:port/database
+            elif 'mysql://' in conn_str:
+                import re
+                match = re.match(r'mysql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', conn_str)
+                if match:
+                    credentials.setdefault('mysql', {}).update({
+                        'user': match.group(1),
+                        'password': match.group(2),
+                        'host': match.group(3),
+                        'port': match.group(4),
+                        'database': match.group(5)
+                    })
+                    
+            # MongoDB: mongodb://user:password@host:port/database
+            elif 'mongodb://' in conn_str:
+                import re
+                match = re.match(r'mongodb://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', conn_str)
+                if match:
+                    credentials.setdefault('mongodb', {}).update({
+                        'user': match.group(1),
+                        'password': match.group(2),
+                        'host': match.group(3),
+                        'port': match.group(4),
+                        'database': match.group(5)
+                    })
+                    
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга connection string: {e}")
+    
+    def _parse_docker_compose(self, file_path, credentials):
+        """Парсинг docker-compose.yml файла"""
+        try:
+            import yaml
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+                
+            if 'services' in data:
+                for service_name, service in data['services'].items():
+                    if 'environment' in service:
+                        env = service['environment']
+                        
+                        # Преобразуем список в словарь если нужно
+                        if isinstance(env, list):
+                            env_dict = {}
+                            for item in env:
+                                if '=' in item:
+                                    k, v = item.split('=', 1)
+                                    env_dict[k] = v
+                            env = env_dict
+                        
+                        # Ищем credentials в environment
+                        if isinstance(env, dict):
+                            # Создаем временный env файл и парсим его
+                            env_content = '\n'.join([f"{k}={v}" for k, v in env.items()])
+                            temp_file = '/tmp/temp_env_parse.env'
+                            with open(temp_file, 'w') as tf:
+                                tf.write(env_content)
+                            self._parse_env_file(temp_file, credentials)
+                            os.remove(temp_file)
+                            
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга docker-compose {file_path}: {e}")
+    
+    def _parse_yaml_config(self, file_path, credentials):
+        """Парсинг YAML конфигурационных файлов"""
+        try:
+            import yaml
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+                
+            # Рекурсивный поиск credentials в YAML
+            def find_credentials(obj, path=""):
+                if isinstance(obj, dict):
+                    for key, value in obj.items():
+                        lower_key = key.lower()
+                        if any(word in lower_key for word in ['password', 'pass', 'pwd', 'secret']):
+                            if isinstance(value, str) and value:
+                                # Пытаемся определить тип БД по пути
+                                if 'postgres' in path.lower() or 'pg' in path.lower():
+                                    credentials.setdefault('postgresql', {})['password'] = value
+                                elif 'mysql' in path.lower() or 'maria' in path.lower():
+                                    credentials.setdefault('mysql', {})['password'] = value
+                                elif 'mongo' in path.lower():
+                                    credentials.setdefault('mongodb', {})['password'] = value
+                                elif 'redis' in path.lower():
+                                    credentials.setdefault('redis', {})['password'] = value
+                        find_credentials(value, path + "/" + key)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_credentials(item, path)
+                        
+            find_credentials(data)
+            
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга YAML {file_path}: {e}")
+    
+    def _parse_php_config(self, file_path, credentials):
+        """Парсинг PHP конфигурационных файлов (wp-config.php и т.д.)"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            import re
+            
+            # Паттерны для поиска в PHP файлах
+            patterns = [
+                (r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)", 'mysql', 'password'),
+                (r"define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)", 'mysql', 'user'),
+                (r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)", 'mysql', 'host'),
+                (r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)", 'mysql', 'database'),
+                (r"\$db\s*\[\s*['\"]password['\"]\s*\]\s*=\s*['\"]([^'\"]+)['\"]", 'mysql', 'password'),
+                (r"\$db\s*\[\s*['\"]user['\"]\s*\]\s*=\s*['\"]([^'\"]+)['\"]", 'mysql', 'user'),
+                (r"\$db\s*\[\s*['\"]host['\"]\s*\]\s*=\s*['\"]([^'\"]+)['\"]", 'mysql', 'host'),
+            ]
+            
+            for pattern, db_type, cred_type in patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                if matches:
+                    credentials.setdefault(db_type, {})[cred_type] = matches[0]
+                    
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга PHP {file_path}: {e}")
+    
+    def _parse_python_config(self, file_path, credentials):
+        """Парсинг Python конфигурационных файлов (settings.py и т.д.)"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            import re
+            
+            # Паттерны для Django settings.py
+            patterns = [
+                (r"DATABASES\s*=\s*{[^}]+}", None, None),  # Весь блок DATABASES
+                (r"['\"]PASSWORD['\"]\s*:\s*['\"]([^'\"]+)['\"]", None, 'password'),
+                (r"['\"]USER['\"]\s*:\s*['\"]([^'\"]+)['\"]", None, 'user'),
+                (r"['\"]HOST['\"]\s*:\s*['\"]([^'\"]+)['\"]", None, 'host'),
+                (r"['\"]PORT['\"]\s*:\s*['\"]([^'\"]+)['\"]", None, 'port'),
+                (r"['\"]NAME['\"]\s*:\s*['\"]([^'\"]+)['\"]", None, 'database'),
+                (r"['\"]ENGINE['\"]\s*:\s*['\"][^'\"]*\.([^'\"\.]+)['\"]", None, 'engine'),
+            ]
+            
+            # Ищем блок DATABASES
+            db_block = re.search(patterns[0][0], content, re.DOTALL)
+            if db_block:
+                block_content = db_block.group(0)
+                
+                # Определяем тип БД по ENGINE
+                engine_match = re.search(patterns[6][0], block_content)
+                db_type = None
+                if engine_match:
+                    engine = engine_match.group(1).lower()
+                    if 'postgresql' in engine or 'postgres' in engine:
+                        db_type = 'postgresql'
+                    elif 'mysql' in engine:
+                        db_type = 'mysql'
+                    elif 'mongodb' in engine:
+                        db_type = 'mongodb'
+                
+                if db_type:
+                    # Извлекаем credentials
+                    for pattern, _, cred_type in patterns[1:6]:
+                        match = re.search(pattern, block_content)
+                        if match and cred_type:
+                            credentials.setdefault(db_type, {})[cred_type] = match.group(1)
+                            
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга Python {file_path}: {e}")
+    
+    def _parse_ini_config(self, file_path, credentials):
+        """Парсинг INI/CFG конфигурационных файлов"""
+        try:
+            import configparser
+            config = configparser.ConfigParser()
+            config.read(file_path, encoding='utf-8')
+            
+            # Ищем секции с БД
+            for section in config.sections():
+                section_lower = section.lower()
+                
+                # Определяем тип БД по названию секции
+                db_type = None
+                if 'postgres' in section_lower or 'pg' in section_lower:
+                    db_type = 'postgresql'
+                elif 'mysql' in section_lower or 'maria' in section_lower:
+                    db_type = 'mysql'
+                elif 'mongo' in section_lower:
+                    db_type = 'mongodb'
+                elif 'redis' in section_lower:
+                    db_type = 'redis'
+                elif 'database' in section_lower or 'db' in section_lower:
+                    # Пытаемся определить по другим параметрам
+                    if config.has_option(section, 'driver'):
+                        driver = config.get(section, 'driver').lower()
+                        if 'postgres' in driver:
+                            db_type = 'postgresql'
+                        elif 'mysql' in driver:
+                            db_type = 'mysql'
+                        elif 'mongo' in driver:
+                            db_type = 'mongodb'
+                
+                if db_type:
+                    # Извлекаем параметры
+                    param_mappings = {
+                        'password': ['password', 'pass', 'pwd', 'secret'],
+                        'user': ['user', 'username', 'login', 'uid'],
+                        'host': ['host', 'hostname', 'server', 'address'],
+                        'port': ['port'],
+                        'database': ['database', 'db', 'dbname', 'name']
+                    }
+                    
+                    for cred_type, possible_keys in param_mappings.items():
+                        for key in possible_keys:
+                            if config.has_option(section, key):
+                                value = config.get(section, key)
+                                if value:
+                                    credentials.setdefault(db_type, {})[cred_type] = value
+                                    break
+                                    
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга INI {file_path}: {e}")
+    
+    def _parse_system_env(self, credentials):
+        """Парсинг системных переменных окружения"""
+        try:
+            # Проверяем текущие переменные окружения процесса
+            for key, value in os.environ.items():
+                key_upper = key.upper()
+                
+                # Используем те же паттерны что и для .env файлов
+                # PostgreSQL
+                if key_upper in ['POSTGRES_PASSWORD', 'PGPASSWORD', 'DB_PASSWORD'] and value:
+                    credentials.setdefault('postgresql', {})['password'] = value
+                elif key_upper in ['POSTGRES_USER', 'PGUSER', 'DB_USER'] and value:
+                    credentials.setdefault('postgresql', {})['user'] = value
+                    
+                # MySQL
+                elif key_upper in ['MYSQL_PASSWORD', 'MYSQL_ROOT_PASSWORD'] and value:
+                    credentials.setdefault('mysql', {})['password'] = value
+                elif key_upper in ['MYSQL_USER', 'MYSQL_ROOT_USER'] and value:
+                    credentials.setdefault('mysql', {})['user'] = value
+                    
+                # MongoDB
+                elif key_upper in ['MONGO_PASSWORD', 'MONGODB_PASSWORD'] and value:
+                    credentials.setdefault('mongodb', {})['password'] = value
+                elif key_upper in ['MONGO_USER', 'MONGODB_USER'] and value:
+                    credentials.setdefault('mongodb', {})['user'] = value
+                    
+                # Redis
+                elif key_upper in ['REDIS_PASSWORD'] and value:
+                    credentials.setdefault('redis', {})['password'] = value
+                    
+        except Exception as e:
+            logging.debug(f"Ошибка парсинга системных переменных: {e}")
+
     def discover_system_databases(self):
         """Обнаружение системных баз данных"""
         logging.info("Сканирование системных процессов...")
@@ -782,10 +1232,16 @@ class UniversalBackup:
             # Пытаемся подключиться к PostgreSQL
             import subprocess
             
-            # Проверяем подключение без пароля
-            cmd = ['psql', '-h', host, '-p', str(port), '-U', 'postgres', '-d', 'template1', '-c', '\\l', '-t']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
-                                  env={**os.environ, 'PGPASSWORD': ''})
+            # Используем найденные учетные данные
+            auto_creds = self.auto_credentials.get('postgresql', {})
+            user = auto_creds.get('user', 'postgres')
+            password = auto_creds.get('password', '')
+            
+            env = os.environ.copy()
+            env['PGPASSWORD'] = password
+            
+            cmd = ['psql', '-h', host, '-p', str(port), '-U', user, '-d', 'template1', '-c', '\\l', '-t']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, env=env)
             
             databases = []
             if result.returncode == 0:
@@ -802,7 +1258,7 @@ class UniversalBackup:
                 'port': port,
                 'databases': databases,
                 'connection_tested': result.returncode == 0,
-                'auth_method': 'trust' if result.returncode == 0 else 'required'
+                'auth_method': 'password' if password else 'trust'
             }
             
         except Exception as e:
@@ -823,8 +1279,15 @@ class UniversalBackup:
         try:
             import subprocess
             
-            # Пытаемся подключиться к MySQL
-            cmd = ['mysql', '-h', host, '-P', str(port), '-u', 'root', '-e', 'SHOW DATABASES;']
+            # Используем найденные учетные данные
+            auto_creds = self.auto_credentials.get('mysql', {})
+            user = auto_creds.get('user', 'root')
+            password = auto_creds.get('password', '')
+            
+            cmd = ['mysql', '-h', host, '-P', str(port), '-u', user, '-e', 'SHOW DATABASES;']
+            if password:
+                cmd.insert(-2, f'-p{password}')
+                
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             
             databases = []
@@ -841,7 +1304,7 @@ class UniversalBackup:
                 'port': port,
                 'databases': databases,
                 'connection_tested': result.returncode == 0,
-                'auth_method': 'no_password' if result.returncode == 0 else 'required'
+                'auth_method': 'password' if password else 'no_password'
             }
             
         except Exception as e:
@@ -861,10 +1324,16 @@ class UniversalBackup:
         try:
             import subprocess
             
-            # Пытаемся подключиться к MongoDB
-            cmd = ['mongo', '--host', f"{host}:{port}", '--eval', 
-                   'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', 
-                   '--quiet']
+            # Используем найденные учетные данные
+            auto_creds = self.auto_credentials.get('mongodb', {})
+            user = auto_creds.get('user', 'admin')
+            password = auto_creds.get('password', '')
+            
+            cmd = ['mongo', '--host', f"{host}:{port}"]
+            if password:
+                cmd.extend(['--username', user, '--password', password])
+                
+            cmd.extend(['--eval', 'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', '--quiet'])
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             
             databases = []
@@ -881,7 +1350,7 @@ class UniversalBackup:
                 'port': port,
                 'databases': databases,
                 'connection_tested': result.returncode == 0,
-                'auth_method': 'no_auth' if result.returncode == 0 else 'required'
+                'auth_method': 'password' if password else 'no_auth'
             }
             
         except Exception as e:
@@ -901,13 +1370,20 @@ class UniversalBackup:
         try:
             import subprocess
             
-            # Пытаемся подключиться к Redis
-            cmd = ['redis-cli', '-h', host, '-p', str(port), 'ping']
+            # Используем найденные учетные данные
+            auto_creds = self.auto_credentials.get('redis', {})
+            password = auto_creds.get('password', '')
+            
+            cmd = ['redis-cli', '-h', host, '-p', str(port)]
+            if password:
+                cmd.extend(['-a', password])
+                
+            cmd.append('ping')
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             
             if result.returncode == 0 and 'PONG' in result.stdout:
                 # Получаем информацию о Redis
-                info_cmd = ['redis-cli', '-h', host, '-p', str(port), 'info', 'keyspace']
+                info_cmd = cmd[:-1] + ['info', 'keyspace']
                 info_result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=5)
                 
                 databases = []
@@ -927,7 +1403,7 @@ class UniversalBackup:
                     'port': port,
                     'databases': databases,
                     'connection_tested': True,
-                    'auth_method': 'no_auth'
+                    'auth_method': 'password' if password else 'no_auth'
                 }
             
         except Exception as e:
@@ -1154,17 +1630,6 @@ class UniversalBackup:
         """Создание резервной копии отдельной БД"""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        if db_info['source'] == 'system':
-            return self._backup_system_database(db_info, timestamp)
-        elif db_info['source'] == 'docker':
-            return self._backup_docker_database(db_info, timestamp)
-        
-        return None
-
-    def backup_database(self, db_info):
-        """Создание резервной копии отдельной БД"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
         if db_info['source'] == 'system' or db_info['source'] == 'network_scan':
             return self._backup_system_database(db_info, timestamp)
         elif db_info['source'] == 'docker':
@@ -1187,11 +1652,16 @@ class UniversalBackup:
                     backup_file = f"pg_{db_info.get('host', 'localhost')}_{db_info.get('port', 5432)}_{database}_{timestamp}.sql"
                     backup_path = os.path.join(self.BACKUP_DIR, backup_file)
                     
+                    # Используем найденные учетные данные
+                    auto_creds = self.auto_credentials.get('postgresql', {})
+                    user = auto_creds.get('user', 'postgres')
+                    password = auto_creds.get('password', '')
+                    
                     cmd = [
                         'pg_dump',
                         '-h', db_info.get('host', 'localhost'),
                         '-p', str(db_info.get('port', 5432)),
-                        '-U', 'postgres',
+                        '-U', user,
                         '--format=custom',
                         '--no-password',
                         '--file', backup_path,
@@ -1199,24 +1669,31 @@ class UniversalBackup:
                     ]
                     
                     env = os.environ.copy()
-                    # Пытаемся без пароля, потом с пустым паролем
-                    env['PGPASSWORD'] = ''
+                    env['PGPASSWORD'] = password
                     
                 elif db_info['type'] == 'mysql':
                     backup_file = f"mysql_{db_info.get('host', 'localhost')}_{db_info.get('port', 3306)}_{database}_{timestamp}.sql"
                     backup_path = os.path.join(self.BACKUP_DIR, backup_file)
                     
+                    # Используем найденные учетные данные
+                    auto_creds = self.auto_credentials.get('mysql', {})
+                    user = auto_creds.get('user', 'root')
+                    password = auto_creds.get('password', '')
+                    
                     cmd = [
                         'mysqldump',
                         '-h', db_info.get('host', 'localhost'),
                         '-P', str(db_info.get('port', 3306)),
-                        '-u', 'root',
+                        '-u', user,
                         '--single-transaction',
                         '--routines',
                         '--triggers',
                         database
                     ]
                     
+                    if password:
+                        cmd.insert(-1, f'-p{password}')
+                        
                     env = os.environ.copy()
                     
                     with open(backup_path, 'w') as f:
@@ -1227,6 +1704,11 @@ class UniversalBackup:
                     backup_path = os.path.join(self.BACKUP_DIR, backup_dir)
                     os.makedirs(backup_path, exist_ok=True)
                     
+                    # Используем найденные учетные данные
+                    auto_creds = self.auto_credentials.get('mongodb', {})
+                    user = auto_creds.get('user', 'admin')
+                    password = auto_creds.get('password', '')
+                    
                     cmd = [
                         'mongodump',
                         '--host', f"{db_info.get('host', 'localhost')}:{db_info.get('port', 27017)}",
@@ -1234,6 +1716,9 @@ class UniversalBackup:
                         '--out', backup_path
                     ]
                     
+                    if password:
+                        cmd.extend(['--username', user, '--password', password])
+                        
                     env = os.environ.copy()
                     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
                     
@@ -1241,13 +1726,21 @@ class UniversalBackup:
                     backup_file = f"redis_{db_info.get('host', 'localhost')}_{db_info.get('port', 6379)}_{database}_{timestamp}.rdb"
                     backup_path = os.path.join(self.BACKUP_DIR, backup_file)
                     
+                    # Используем найденные учетные данные
+                    auto_creds = self.auto_credentials.get('redis', {})
+                    password = auto_creds.get('password', '')
+                    
                     # Для Redis используем BGSAVE и копируем RDB файл
                     cmd = [
                         'redis-cli',
                         '-h', db_info.get('host', 'localhost'),
-                        '-p', str(db_info.get('port', 6379)),
-                        'BGSAVE'
+                        '-p', str(db_info.get('port', 6379))
                     ]
+                    
+                    if password:
+                        cmd.extend(['-a', password])
+                        
+                    cmd.append('BGSAVE')
                     
                     env = os.environ.copy()
                     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -1705,14 +2198,15 @@ class UniversalBackup:
     def _test_postgresql_connection(self, db):
         """Тест подключения к PostgreSQL"""
         try:
+            auto_creds = self.auto_credentials.get('postgresql', {})
+            user = auto_creds.get('user', 'postgres')
+            password = auto_creds.get('password', '')
+            
             env = os.environ.copy()
-            # Проверяем наличие пароля в переменных окружения
-            if 'POSTGRES_PASSWORD' not in env and 'PGPASSWORD' not in env:
-                logging.warning("PostgreSQL: пароль не задан в переменных окружения")
-                return False
-                
+            env['PGPASSWORD'] = password
+            
             cmd = ['psql', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 5432)),
-                   '-U', 'postgres', '-d', 'template1', '-c', 'SELECT version();', '--no-password']
+                   '-U', user, '-d', 'template1', '-c', 'SELECT version();', '--no-password']
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
             return result.returncode == 0
         except Exception as e:
@@ -1722,17 +2216,16 @@ class UniversalBackup:
     def _test_mysql_connection(self, db):
         """Тест подключения к MySQL"""
         try:
-            env = os.environ.copy()
-            mysql_password = env.get('MYSQL_PASSWORD') or env.get('MYSQL_ROOT_PASSWORD')
+            auto_creds = self.auto_credentials.get('mysql', {})
+            user = auto_creds.get('user', 'root')
+            password = auto_creds.get('password', '')
             
-            if mysql_password:
-                cmd = ['mysql', '-h', db.get('host', 'localhost'), '-P', str(db.get('port', 3306)),
-                       '-u', 'root', f'-p{mysql_password}', '-e', 'SELECT VERSION();']
-            else:
-                cmd = ['mysql', '-h', db.get('host', 'localhost'), '-P', str(db.get('port', 3306)),
-                       '-u', 'root', '-e', 'SELECT VERSION();']
+            cmd = ['mysql', '-h', db.get('host', 'localhost'), '-P', str(db.get('port', 3306)),
+                   '-u', user, '-e', 'SELECT VERSION();']
+            if password:
+                cmd.insert(-2, f'-p{password}')
                        
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except Exception as e:
             logging.warning(f"Ошибка тестирования MySQL: {e}")
@@ -1741,19 +2234,16 @@ class UniversalBackup:
     def _test_mongodb_connection(self, db):
         """Тест подключения к MongoDB"""
         try:
-            env = os.environ.copy()
-            mongo_user = env.get('MONGO_USER', 'admin')
-            mongo_password = env.get('MONGO_PASSWORD')
+            auto_creds = self.auto_credentials.get('mongodb', {})
+            user = auto_creds.get('user', 'admin')
+            password = auto_creds.get('password', '')
             
-            if mongo_password:
-                cmd = ['mongo', '--host', f"{db.get('host', 'localhost')}:{db.get('port', 27017)}",
-                       '--username', mongo_user, '--password', mongo_password,
-                       '--eval', 'db.version()', '--quiet']
-            else:
-                cmd = ['mongo', '--host', f"{db.get('host', 'localhost')}:{db.get('port', 27017)}",
-                       '--eval', 'db.version()', '--quiet']
+            cmd = ['mongo', '--host', f"{db.get('host', 'localhost')}:{db.get('port', 27017)}"]
+            if password:
+                cmd.extend(['--username', user, '--password', password])
+            cmd.extend(['--eval', 'db.version()', '--quiet'])
                        
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except Exception as e:
             logging.warning(f"Ошибка тестирования MongoDB: {e}")
@@ -1762,121 +2252,19 @@ class UniversalBackup:
     def _test_redis_connection(self, db):
         """Тест подключения к Redis"""
         try:
-            env = os.environ.copy()
-            redis_password = env.get('REDIS_PASSWORD')
+            auto_creds = self.auto_credentials.get('redis', {})
+            password = auto_creds.get('password', '')
             
-            if redis_password:
-                cmd = ['redis-cli', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 6379)), 
-                       '-a', redis_password, 'ping']
-            else:
-                cmd = ['redis-cli', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 6379)), 'ping']
+            cmd = ['redis-cli', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 6379))]
+            if password:
+                cmd.extend(['-a', password])
+            cmd.append('ping')
                 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             return result.returncode == 0 and 'PONG' in result.stdout
         except Exception as e:
             logging.warning(f"Ошибка тестирования Redis: {e}")
             return False
-
-    def auto_discover_credentials(self):
-        """Автоматическое обнаружение учетных данных из конфигурационных файлов"""
-        credentials = {}
-        
-        # Поиск .env файлов в текущей директории и типичных местах
-        env_locations = [
-            '.env',
-            '.env.local', 
-            '.env.production',
-            'env.example',
-            'test_config.env'
-        ]
-        
-        for env_file in env_locations:
-            if os.path.exists(env_file):
-                try:
-                    logging.info(f"📄 Найден файл конфигурации: {env_file}")
-                    # Попробуем разные кодировки
-                    encodings = ['utf-8-sig', 'utf-8', 'cp1251', 'latin-1']
-                    content = None
-                    for encoding in encodings:
-                        try:
-                            with open(env_file, 'r', encoding=encoding) as f:
-                                content = f.read()
-                                # Удаляем BOM если он есть
-                                content = content.lstrip('\ufeff')
-                                break
-                        except UnicodeDecodeError:
-                            continue
-                    
-                    if content is None:
-                        logging.warning(f"⚠️ Не удалось декодировать файл {env_file}")
-                        continue
-                    
-                    for line in content.split('\n'):
-                        line = line.strip()
-                        if '=' in line and not line.startswith('#'):
-                            key, value = line.split('=', 1)
-                            key = key.strip()
-                            value = value.strip().strip('"\'')
-                            
-                            logging.debug(f"Парсинг параметра: {key} = {value}")
-                            
-                            # PostgreSQL
-                            if key in ['POSTGRES_PASSWORD', 'PGPASSWORD']:
-                                credentials.setdefault('postgresql', {})['password'] = value
-                                logging.debug(f"Найден пароль PostgreSQL: {value}")
-                            elif key in ['POSTGRES_USER', 'PGUSER']:
-                                credentials.setdefault('postgresql', {})['user'] = value
-                                logging.debug(f"Найден пользователь PostgreSQL: {value}")
-                            elif key in ['POSTGRES_HOST', 'PGHOST']:
-                                credentials.setdefault('postgresql', {})['host'] = value
-                                logging.debug(f"Найден хост PostgreSQL: {value}")
-                            elif key in ['POSTGRES_PORT', 'PGPORT']:
-                                credentials.setdefault('postgresql', {})['port'] = value
-                                logging.debug(f"Найден порт PostgreSQL: {value}")
-                            
-                            # MySQL
-                            elif key in ['MYSQL_PASSWORD', 'MYSQL_ROOT_PASSWORD']:
-                                credentials.setdefault('mysql', {})['password'] = value
-                                logging.debug(f"Найден пароль MySQL: {value}")
-                            elif key in ['MYSQL_USER', 'MYSQL_ROOT_USER']:
-                                credentials.setdefault('mysql', {})['user'] = value
-                                logging.debug(f"Найден пользователь MySQL: {value}")
-                            elif key in ['MYSQL_HOST']:
-                                credentials.setdefault('mysql', {})['host'] = value
-                                logging.debug(f"Найден хост MySQL: {value}")
-                            elif key in ['MYSQL_PORT']:
-                                credentials.setdefault('mysql', {})['port'] = value
-                                logging.debug(f"Найден порт MySQL: {value}")
-                            
-                            # MongoDB
-                            elif key in ['MONGO_PASSWORD', 'MONGODB_PASSWORD']:
-                                credentials.setdefault('mongodb', {})['password'] = value
-                                logging.debug(f"Найден пароль MongoDB: {value}")
-                            elif key in ['MONGO_USER', 'MONGODB_USER', 'MONGO_INITDB_ROOT_USERNAME']:
-                                credentials.setdefault('mongodb', {})['user'] = value
-                                logging.debug(f"Найден пользователь MongoDB: {value}")
-                            elif key in ['MONGO_HOST', 'MONGODB_HOST']:
-                                credentials.setdefault('mongodb', {})['host'] = value
-                                logging.debug(f"Найден хост MongoDB: {value}")
-                            elif key in ['MONGO_PORT', 'MONGODB_PORT']:
-                                credentials.setdefault('mongodb', {})['port'] = value
-                                logging.debug(f"Найден порт MongoDB: {value}")
-                            
-                            # Redis
-                            elif key in ['REDIS_PASSWORD']:
-                                credentials.setdefault('redis', {})['password'] = value
-                                logging.debug(f"Найден пароль Redis: {value}")
-                            elif key in ['REDIS_HOST']:
-                                credentials.setdefault('redis', {})['host'] = value
-                                logging.debug(f"Найден хост Redis: {value}")
-                            elif key in ['REDIS_PORT']:
-                                credentials.setdefault('redis', {})['port'] = value
-                                logging.debug(f"Найден порт Redis: {value}")
-                                
-                except Exception as e:
-                    logging.warning(f"⚠️ Ошибка парсинга {env_file}: {e}")
-        
-        return credentials
 
     def _print_discovered_credentials(self):
         """Отображение найденных учетных данных"""
