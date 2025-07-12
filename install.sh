@@ -222,6 +222,15 @@ download_scripts() {
     # Если используется Git репозиторий
     if [ ! -z "$GITHUB_REPO" ] && [ "$GITHUB_REPO" != "your-username/DumpItAll" ]; then
         git clone https://github.com/$GITHUB_REPO.git .
+        
+        # Копирование файла сервиса в правильное место
+        if [ -f "$INSTALL_DIR/dumpitall.service" ]; then
+            cp "$INSTALL_DIR/dumpitall.service" "/etc/systemd/system/$SERVICE_NAME.service"
+            success "Файл сервиса скопирован"
+        else
+            warning "Файл сервиса не найден в репозитории, создаем локально"
+            create_service_file
+        fi
     else
         # Создание файлов локально (используем встроенный код)
         create_backup_script
