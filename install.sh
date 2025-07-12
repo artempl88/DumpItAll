@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # Быстрый инсталлер DumpItAll - универсальной системы резервного копирования БД
-# Использование: curl -sSL https://raw.githubusercontent.com/your-username/DumpItAll/main/install.sh | sudo bash
+# Использование: curl -sSL https://raw.githubusercontent.com/artempl88/DumpItAll/main/install.sh | sudo bash
 
 set -e
 
 INSTALL_DIR="/opt/dumpitall"
 SERVICE_NAME="dumpitall"
-GITHUB_REPO="your-username/DumpItAll"
+GITHUB_REPO="artempl88/DumpItAll"
 
 # Цвета для вывода
 RED='\033[0;31m'
@@ -45,6 +45,53 @@ detect_os() {
     info "Обнаружена ОС: $OS $VER"
 }
 
+# Установка MongoDB репозитория и ключей
+setup_mongodb_repo() {
+    step "Настройка репозитория MongoDB..."
+    
+    case $OS in
+        *"Ubuntu"*|*"Debian"*)
+            # Установка зависимостей
+            apt-get install -y gnupg curl
+            
+            # Добавление GPG ключа MongoDB (новый способ)
+            curl -fsSL https://pgp.mongodb.com/server-7.0.asc | \
+                gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+            
+            # Определение кодового имени релиза
+            if [[ "$VER" == "22.04" ]]; then
+                CODENAME="jammy"
+            elif [[ "$VER" == "20.04" ]]; then
+                CODENAME="focal"
+            elif [[ "$VER" == "18.04" ]]; then
+                CODENAME="bionic"
+            else
+                CODENAME="jammy"  # По умолчанию для новых версий
+            fi
+            
+            # Добавление репозитория MongoDB
+            echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu $CODENAME/mongodb-org/7.0 multiverse" | \
+                tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+            
+            # Обновление списка пакетов
+            apt-get update
+            ;;
+        *"CentOS"*|*"Red Hat"*|*"Rocky"*|*"AlmaLinux"*)
+            # Для CentOS/RHEL создаем yum репозиторий
+            cat > /etc/yum.repos.d/mongodb-org-7.0.repo << EOF
+[mongodb-org-7.0]
+name=MongoDB Repository
+baseurl=https://repo.mongodb.org/yum/redhat/\$releasever/mongodb-org/7.0/x86_64/
+gpgcheck=1
+enabled=1
+gpgkey=https://pgp.mongodb.com/server-7.0.asc
+EOF
+            ;;
+    esac
+    
+    success "Репозиторий MongoDB настроен"
+}
+
 # Установка базовых пакетов
 install_base_packages() {
     step "Установка базовых пакетов..."
@@ -61,11 +108,17 @@ install_base_packages() {
                 git \
                 postgresql-client \
                 mysql-client \
-                mongodb-clients \
                 redis-tools \
                 docker.io \
                 systemd \
-                jq
+                jq \
+                gnupg
+            
+            # Установка MongoDB клиентов из официального репозитория
+            setup_mongodb_repo
+            apt-get install -y \
+                mongodb-mongosh \
+                mongodb-database-tools
             ;;
         *"CentOS"*|*"Red Hat"*|*"Rocky"*|*"AlmaLinux"*)
             yum update -y
@@ -77,11 +130,16 @@ install_base_packages() {
                 git \
                 postgresql \
                 mysql \
-                mongodb-tools \
                 redis \
                 docker \
                 systemd \
                 jq
+            
+            # Установка MongoDB клиентов
+            setup_mongodb_repo
+            yum install -y \
+                mongodb-mongosh \
+                mongodb-database-tools
             ;;
         *)
             warning "Неподдерживаемая ОС, пытаемся установить с помощью пакетного менеджера по умолчанию"
@@ -114,7 +172,7 @@ download_scripts() {
     cd $INSTALL_DIR
     
     # Если используется Git репозиторий
-    if [ ! -z "$GITHUB_REPO" ] && [ "$GITHUB_REPO" != "your-username/db-backup-scripts" ]; then
+    if [ ! -z "$GITHUB_REPO" ] && [ "$GITHUB_REPO" != "your-username/DumpItAll" ]; then
         git clone https://github.com/$GITHUB_REPO.git .
     else
         # Создание файлов локально (используем встроенный код)

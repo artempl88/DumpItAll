@@ -329,13 +329,13 @@ python3 backup_script.py --daemon
 
 ### Автоматическая установка
 ```bash
-curl -sSL https://raw.githubusercontent.com/your-username/DumpItAll/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/artempl88/DumpItAll/main/install.sh | sudo bash
 ```
 
 ### Ручная установка
 ```bash
 # 1. Клонирование репозитория
-git clone https://github.com/your-username/DumpItAll.git
+git clone https://github.com/artempl88/DumpItAll.git
 cd DumpItAll
 
 # 2. Установка Python зависимостей
