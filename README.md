@@ -417,15 +417,17 @@ DumpItAll поддерживает работу с паролями через �
 ### Systemd сервис (Production)
 ```bash
 # Копирование в production директорию
-sudo mkdir -p /opt/db-backup
-sudo cp -r . /opt/db-backup/
-sudo chown -R backup:backup /opt/db-backup
+sudo mkdir -p /opt/dumpitall
+sudo cp -r . /opt/dumpitall/
+sudo chown -R backup:backup /opt/dumpitall
 
 # Установка и запуск сервиса
-sudo cp db-backup.service /etc/systemd/system/
-sudo systemctl enable db-backup.service
-sudo systemctl start db-backup.service
+sudo cp dumpitall.service /etc/systemd/system/
+sudo systemctl enable dumpitall.service
+sudo systemctl start dumpitall.service
 ```
+
+> **📋 Примечание**: Сервис теперь называется `dumpitall` и устанавливается в `/opt/dumpitall/`. Автоматический инсталлер выполняет эти настройки автоматически.
 
 ## 🖥️ Использование
 
@@ -498,8 +500,8 @@ cat backups/backup_statistics.json | jq '.[-1]'
 tail -f backup.log
 
 # Статус systemd сервиса
-sudo systemctl status db-backup.service
-journalctl -u db-backup.service -f
+sudo systemctl status dumpitall.service
+journalctl -u dumpitall.service -f
 ```
 
 ### Пример отчета обнаружения
@@ -532,16 +534,16 @@ python3 backup_script.py --test-connections
 ### Настройка production среды
 ```bash
 # 1. Обнаружение БД
-python3 backup_script.py --scan-only --config /opt/db-backup/.env
+python3 backup_script.py --scan-only --config /opt/dumpitall/.env
 
 # 2. Тестирование подключений
-python3 backup_script.py --test-connections --config /opt/db-backup/.env
+python3 backup_script.py --test-connections --config /opt/dumpitall/.env
 
 # 3. Пробное резервное копирование
-python3 backup_script.py --backup-once --config /opt/db-backup/.env
+python3 backup_script.py --backup-once --config /opt/dumpitall/.env
 
 # 4. Запуск production демона
-systemctl start db-backup.service
+systemctl start dumpitall.service
 ```
 
 ### Отладка проблем
@@ -632,13 +634,13 @@ cat service-account-key.json | jq .client_email
 ### Systemd сервис
 ```bash
 # Проверка статуса
-sudo systemctl status db-backup.service
+sudo systemctl status dumpitall.service
 
 # Просмотр логов
-journalctl -u db-backup.service -f
+journalctl -u dumpitall.service -f
 
 # Перезапуск сервиса
-sudo systemctl restart db-backup.service
+sudo systemctl restart dumpitall.service
 ```
 
 ## 📁 Структура проекта
@@ -649,7 +651,7 @@ DumpItAll/
 ├── requirements.txt               # Python зависимости
 ├── .env.example                  # Пример конфигурации
 ├── service-account-key.json      # Google Drive ключи (не в git)
-├── db-backup.service             # Systemd сервис
+├── dumpitall.service             # Systemd сервис
 ├── setup_database_access.sh      # Скрипт настройки БД
 ├── install.sh                    # Автоматический инсталлер
 ├── backups/                      # Директория резервных копий
