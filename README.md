@@ -428,8 +428,8 @@ GRANT SELECT, LOCK TABLES, SHOW VIEW ON *.* TO 'backup_user'@'localhost';
 
 ## 📞 Поддержка
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/DumpItAll/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/DumpItAll/discussions)
+- **Issues**: [GitHub Issues](https://github.com/artempl88/DumpItAll/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/artempl88/DumpItAll/discussions)
 - **Email**: notpunksdev@gmail.com
 
 ---
