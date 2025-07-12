@@ -1,0 +1,29 @@
+[Unit]
+Description=Database Backup Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=backup
+Group=backup
+WorkingDirectory=/opt/db-backup
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/opt/db-backup
+ExecStart=/usr/bin/python3 /opt/db-backup/backup_script.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=db-backup
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/db-backup
+
+[Install]
+WantedBy=multi-user.target
