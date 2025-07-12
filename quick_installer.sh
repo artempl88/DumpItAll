@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Быстрый инсталлер универсальной системы резервного копирования БД
-# Использование: curl -sSL https://your-domain.com/install.sh | sudo bash
+# Быстрый инсталлер DumpItAll - универсальной системы резервного копирования БД
+# Использование: curl -sSL https://raw.githubusercontent.com/your-username/DumpItAll/main/install.sh | sudo bash
 
 set -e
 
-INSTALL_DIR="/opt/db-backup"
-SERVICE_NAME="db-backup"
-GITHUB_REPO="your-username/db-backup-scripts"  # Замените на ваш репозиторий
+INSTALL_DIR="/opt/dumpitall"
+SERVICE_NAME="dumpitall"
+GITHUB_REPO="your-username/DumpItAll"
 
 # Цвета для вывода
 RED='\033[0;31m'

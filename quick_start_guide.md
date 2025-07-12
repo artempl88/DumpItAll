@@ -1,10 +1,12 @@
-# 🚀 Быстрый старт - от 0 до работающей системы за 5 минут
+# 🚀 DumpItAll - Быстрый старт
+
+## От 0 до работающей системы за 5 минут
 
 ## Шаг 1: Установка (1 минута)
 ```bash
-# Скачивание скриптов
-curl -O https://raw.githubusercontent.com/your-repo/backup_script.py
-curl -O https://raw.githubusercontent.com/your-repo/requirements.txt
+# Скачивание DumpItAll
+curl -O https://raw.githubusercontent.com/your-username/DumpItAll/main/backup_script.py
+curl -O https://raw.githubusercontent.com/your-username/DumpItAll/main/requirements.txt
 
 # Установка зависимостей
 pip3 install -r requirements.txt
