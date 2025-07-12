@@ -425,33 +425,85 @@ class UniversalBackup:
         
         try:
             if db_type == 'postgresql':
-                cmd = ['psql', '-h', host, '-p', str(port), '-U', 'postgres', '-l', '-t']
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                # Используем переменную окружения для пароля, если она задана
+                env = os.environ.copy()
+                if 'POSTGRES_PASSWORD' not in env and 'PGPASSWORD' not in env:
+                    # Если пароль не задан, пропускаем получение списка БД
+                    logging.warning(f"Пароль PostgreSQL не задан в переменных окружения (PGPASSWORD или POSTGRES_PASSWORD)")
+                    return databases
+                
+                cmd = ['psql', '-h', host, '-p', str(port), '-U', 'postgres', '-l', '-t', '--no-password']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
                 if result.returncode == 0:
                     for line in result.stdout.split('\n'):
                         if '|' in line:
                             db_name = line.split('|')[0].strip()
                             if db_name and db_name not in ['template0', 'template1']:
                                 databases.append(db_name)
+                else:
+                    logging.warning(f"Не удалось подключиться к PostgreSQL: {result.stderr}")
             
             elif db_type == 'mysql':
-                cmd = ['mysql', '-h', host, '-P', str(port), '-e', 'SHOW DATABASES;']
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                # Используем переменную окружения для пароля
+                env = os.environ.copy()
+                mysql_password = env.get('MYSQL_PASSWORD') or env.get('MYSQL_ROOT_PASSWORD')
+                
+                if mysql_password:
+                    cmd = ['mysql', '-h', host, '-P', str(port), '-u', 'root', f'-p{mysql_password}', '-e', 'SHOW DATABASES;']
+                else:
+                    # Пытаемся подключиться без пароля
+                    cmd = ['mysql', '-h', host, '-P', str(port), '-u', 'root', '-e', 'SHOW DATABASES;']
+                    
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
                 if result.returncode == 0:
                     for line in result.stdout.split('\n'):
                         db_name = line.strip()
                         if db_name and db_name not in ['Database', 'information_schema', 'performance_schema', 'mysql', 'sys']:
                             databases.append(db_name)
+                else:
+                    logging.warning(f"Не удалось подключиться к MySQL: {result.stderr}")
             
             elif db_type == 'mongodb':
-                cmd = ['mongo', '--host', f"{host}:{port}", '--eval', 'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })']
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                # Используем переменную окружения для пароля
+                env = os.environ.copy()
+                mongo_user = env.get('MONGO_USER', 'admin')
+                mongo_password = env.get('MONGO_PASSWORD')
+                
+                if mongo_password:
+                    cmd = ['mongo', '--host', f"{host}:{port}", '--username', mongo_user, '--password', mongo_password, 
+                           '--eval', 'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', '--quiet']
+                else:
+                    # Пытаемся подключиться без аутентификации
+                    cmd = ['mongo', '--host', f"{host}:{port}", '--eval', 'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', '--quiet']
+                    
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
                 if result.returncode == 0:
                     for line in result.stdout.split('\n'):
                         db_name = line.strip()
                         if db_name and db_name not in ['admin', 'local', 'config']:
                             databases.append(db_name)
+                else:
+                    logging.warning(f"Не удалось подключиться к MongoDB: {result.stderr}")
+            
+            elif db_type == 'redis':
+                # Redis обычно не требует пароль по умолчанию
+                env = os.environ.copy()
+                redis_password = env.get('REDIS_PASSWORD')
+                
+                if redis_password:
+                    cmd = ['redis-cli', '-h', host, '-p', str(port), '-a', redis_password, 'INFO', 'keyspace']
+                else:
+                    cmd = ['redis-cli', '-h', host, '-p', str(port), 'INFO', 'keyspace']
+                    
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+                if result.returncode == 0:
+                    # Для Redis просто добавляем общую БД
+                    databases.append('redis_db')
+                else:
+                    logging.warning(f"Не удалось подключиться к Redis: {result.stderr}")
                             
+        except subprocess.TimeoutExpired:
+            logging.warning(f"Тайм-аут при получении списка БД для {db_type} на {host}:{port}")
         except Exception as e:
             logging.warning(f"Не удалось получить список БД для {db_type}: {e}")
         
@@ -463,24 +515,35 @@ class UniversalBackup:
         
         try:
             if db_type == 'postgresql':
-                cmd = ['psql', '-U', credentials.get('user', 'postgres'), '-l', '-t']
+                cmd = ['psql', '-U', credentials.get('user', 'postgres'), '-l', '-t', '--no-password']
+                env = {'PGPASSWORD': credentials.get('password', '')} if credentials.get('password') else {}
             elif db_type == 'mysql':
-                cmd = ['mysql', '-u', credentials.get('user', 'root'), '-e', 'SHOW DATABASES;']
+                user = credentials.get('user', 'root')
+                password = credentials.get('password', '')
+                if password:
+                    cmd = ['mysql', '-u', user, f'-p{password}', '-e', 'SHOW DATABASES;']
+                else:
+                    cmd = ['mysql', '-u', user, '-e', 'SHOW DATABASES;']
+                env = {}
             elif db_type == 'mongodb':
-                cmd = ['mongo', '--eval', 'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })']
+                user = credentials.get('user', 'admin')
+                password = credentials.get('password', '')
+                if password:
+                    cmd = ['mongo', '--username', user, '--password', password, '--eval', 
+                           'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', '--quiet']
+                else:
+                    cmd = ['mongo', '--eval', 
+                           'db.adminCommand("listDatabases").databases.forEach(function(db) { print(db.name) })', '--quiet']
+                env = {}
+            elif db_type == 'redis':
+                password = credentials.get('password', '')
+                if password:
+                    cmd = ['redis-cli', '-a', password, 'INFO', 'keyspace']
+                else:
+                    cmd = ['redis-cli', 'INFO', 'keyspace']
+                env = {}
             else:
                 return []
-            
-            if credentials.get('password'):
-                if db_type == 'postgresql':
-                    env = {'PGPASSWORD': credentials['password']}
-                elif db_type == 'mysql':
-                    cmd.extend(['-p' + credentials['password']])
-                    env = {}
-                else:
-                    env = {}
-            else:
-                env = {}
             
             result = container.exec_run(cmd, environment=env)
             if result.exit_code == 0:
@@ -504,6 +567,12 @@ class UniversalBackup:
                         db_name = line.strip()
                         if db_name and db_name not in ['admin', 'local', 'config']:
                             databases.append(db_name)
+                
+                elif db_type == 'redis':
+                    # Для Redis просто добавляем общую БД
+                    databases.append('redis_db')
+            else:
+                logging.warning(f"Не удалось получить список БД в контейнере {container.name}: {result.output.decode('utf-8')}")
                             
         except Exception as e:
             logging.warning(f"Не удалось получить список БД в контейнере {container.name}: {e}")
@@ -1577,41 +1646,76 @@ class UniversalBackup:
     def _test_postgresql_connection(self, db):
         """Тест подключения к PostgreSQL"""
         try:
+            env = os.environ.copy()
+            # Проверяем наличие пароля в переменных окружения
+            if 'POSTGRES_PASSWORD' not in env and 'PGPASSWORD' not in env:
+                logging.warning("PostgreSQL: пароль не задан в переменных окружения")
+                return False
+                
             cmd = ['psql', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 5432)),
-                   '-U', 'postgres', '-d', 'template1', '-c', 'SELECT version();']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5,
-                                  env={**os.environ, 'PGPASSWORD': ''})
+                   '-U', 'postgres', '-d', 'template1', '-c', 'SELECT version();', '--no-password']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
             return result.returncode == 0
-        except:
+        except Exception as e:
+            logging.warning(f"Ошибка тестирования PostgreSQL: {e}")
             return False
 
     def _test_mysql_connection(self, db):
         """Тест подключения к MySQL"""
         try:
-            cmd = ['mysql', '-h', db.get('host', 'localhost'), '-P', str(db.get('port', 3306)),
-                   '-u', 'root', '-e', 'SELECT VERSION();']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            env = os.environ.copy()
+            mysql_password = env.get('MYSQL_PASSWORD') or env.get('MYSQL_ROOT_PASSWORD')
+            
+            if mysql_password:
+                cmd = ['mysql', '-h', db.get('host', 'localhost'), '-P', str(db.get('port', 3306)),
+                       '-u', 'root', f'-p{mysql_password}', '-e', 'SELECT VERSION();']
+            else:
+                cmd = ['mysql', '-h', db.get('host', 'localhost'), '-P', str(db.get('port', 3306)),
+                       '-u', 'root', '-e', 'SELECT VERSION();']
+                       
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
             return result.returncode == 0
-        except:
+        except Exception as e:
+            logging.warning(f"Ошибка тестирования MySQL: {e}")
             return False
 
     def _test_mongodb_connection(self, db):
         """Тест подключения к MongoDB"""
         try:
-            cmd = ['mongo', '--host', f"{db.get('host', 'localhost')}:{db.get('port', 27017)}",
-                   '--eval', 'db.version()', '--quiet']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            env = os.environ.copy()
+            mongo_user = env.get('MONGO_USER', 'admin')
+            mongo_password = env.get('MONGO_PASSWORD')
+            
+            if mongo_password:
+                cmd = ['mongo', '--host', f"{db.get('host', 'localhost')}:{db.get('port', 27017)}",
+                       '--username', mongo_user, '--password', mongo_password,
+                       '--eval', 'db.version()', '--quiet']
+            else:
+                cmd = ['mongo', '--host', f"{db.get('host', 'localhost')}:{db.get('port', 27017)}",
+                       '--eval', 'db.version()', '--quiet']
+                       
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
             return result.returncode == 0
-        except:
+        except Exception as e:
+            logging.warning(f"Ошибка тестирования MongoDB: {e}")
             return False
 
     def _test_redis_connection(self, db):
         """Тест подключения к Redis"""
         try:
-            cmd = ['redis-cli', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 6379)), 'ping']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            env = os.environ.copy()
+            redis_password = env.get('REDIS_PASSWORD')
+            
+            if redis_password:
+                cmd = ['redis-cli', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 6379)), 
+                       '-a', redis_password, 'ping']
+            else:
+                cmd = ['redis-cli', '-h', db.get('host', 'localhost'), '-p', str(db.get('port', 6379)), 'ping']
+                
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
             return result.returncode == 0 and 'PONG' in result.stdout
-        except:
+        except Exception as e:
+            logging.warning(f"Ошибка тестирования Redis: {e}")
             return False
 
 def main():

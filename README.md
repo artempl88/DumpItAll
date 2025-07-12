@@ -116,10 +116,45 @@ BACKUP_DIR=./backups
 # Логирование  
 LOG_LEVEL=INFO
 
-# Дополнительные настройки (опционально)
-# DB_USER=backup_user
-# DB_PASSWORD=backup_password
+# Пароли для доступа к базам данных
+# PostgreSQL
+PGPASSWORD=your_postgres_password
+# или
+POSTGRES_PASSWORD=your_postgres_password
+
+# MySQL/MariaDB
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_ROOT_PASSWORD=your_mysql_root_password
+
+# MongoDB
+MONGO_USER=admin
+MONGO_PASSWORD=your_mongo_password
+
+# Redis
+REDIS_PASSWORD=your_redis_password
 ```
+
+### Настройка паролей БД
+
+DumpItAll поддерживает работу с паролями через переменные окружения:
+
+1. **Создайте файл конфигурации**:
+   ```bash
+   cp env.example .env
+   ```
+
+2. **Укажите пароли в файле `.env`**:
+   - **PostgreSQL**: `PGPASSWORD` или `POSTGRES_PASSWORD`
+   - **MySQL/MariaDB**: `MYSQL_PASSWORD` или `MYSQL_ROOT_PASSWORD`
+   - **MongoDB**: `MONGO_USER` и `MONGO_PASSWORD`
+   - **Redis**: `REDIS_PASSWORD`
+
+3. **Ограничьте права доступа**:
+   ```bash
+   chmod 600 .env
+   ```
+
+> **Примечание**: Если пароли не заданы, приложение попытается подключиться без аутентификации. Это может работать для локальных инсталляций БД с отключенной аутентификацией.
 
 ### Google Drive API
 1. Перейдите в [Google Cloud Console](https://console.cloud.google.com/)
