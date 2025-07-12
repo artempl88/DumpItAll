@@ -430,7 +430,7 @@ GRANT SELECT, LOCK TABLES, SHOW VIEW ON *.* TO 'backup_user'@'localhost';
 
 - **Issues**: [GitHub Issues](https://github.com/your-username/DumpItAll/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/your-username/DumpItAll/discussions)
-- **Email**: support@dumpitall.dev
+- **Email**: notpunksdev@gmail.com
 
 ---
 
