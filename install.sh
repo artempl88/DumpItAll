@@ -221,7 +221,29 @@ download_scripts() {
     
     # Если используется Git репозиторий
     if [ ! -z "$GITHUB_REPO" ] && [ "$GITHUB_REPO" != "your-username/DumpItAll" ]; then
-        git clone https://github.com/$GITHUB_REPO.git .
+        # Проверяем, пуста ли директория
+        if [ "$(ls -A $INSTALL_DIR 2>/dev/null)" ]; then
+            warning "Директория $INSTALL_DIR не пуста, очищаем её..."
+            # Безопасная очистка - только если мы в правильной директории
+            if [ "$(pwd)" = "$INSTALL_DIR" ]; then
+                rm -rf $INSTALL_DIR/*
+                rm -rf $INSTALL_DIR/.[!.]*
+            else
+                error "Ошибка: находимся не в целевой директории"
+                exit 1
+            fi
+        fi
+        
+        # Клонируем репозиторий
+        if git clone https://github.com/$GITHUB_REPO.git .; then
+            success "Репозиторий загружен"
+        else
+            error "Не удалось загрузить репозиторий, создаем файлы локально"
+            create_backup_script
+            create_requirements_file
+            create_service_file
+            return
+        fi
         
         # Копирование файла сервиса в правильное место
         if [ -f "$INSTALL_DIR/dumpitall.service" ]; then
