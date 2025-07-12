@@ -1,0 +1,117 @@
+# ==============================================================================
+# DumpItAll - Универсальная конфигурация резервного копирования БД
+# ==============================================================================
+# Скопируйте этот файл в .env и укажите ваши настройки
+
+# ==============================================================================
+# PostgreSQL
+# ==============================================================================
+# Основные учетные данные
+POSTGRES_PASSWORD=your_postgres_password
+# PGPASSWORD=your_postgres_password
+# POSTGRES_USER=postgres
+# PGUSER=postgres
+# POSTGRES_HOST=localhost
+# PGHOST=localhost
+# POSTGRES_PORT=5432
+# PGPORT=5432
+# POSTGRES_DB=myapp
+# PGDATABASE=myapp
+
+# Альтернативные названия (также поддерживаются)
+# DB_PASSWORD=your_postgres_password
+# DATABASE_PASSWORD=your_postgres_password
+# PG_PASSWORD=your_postgres_password
+# POSTGRESQL_PASSWORD=your_postgres_password
+
+# ==============================================================================
+# MySQL/MariaDB
+# ==============================================================================
+# Основные учетные данные
+MYSQL_ROOT_PASSWORD=your_mysql_password
+# MYSQL_PASSWORD=your_mysql_password
+# MYSQL_USER=root
+# MYSQL_ROOT_USER=root
+# MYSQL_HOST=localhost
+# MYSQL_PORT=3306
+# MYSQL_DATABASE=myapp
+
+# Альтернативные названия
+# MARIADB_PASSWORD=your_mysql_password
+# MARIADB_ROOT_PASSWORD=your_mysql_password
+# MARIADB_USER=root
+# MARIADB_HOST=localhost
+# MARIADB_PORT=3306
+# MARIADB_DATABASE=myapp
+
+# ==============================================================================
+# MongoDB
+# ==============================================================================
+# Основные учетные данные
+MONGO_USER=admin
+MONGO_PASSWORD=your_mongo_password
+# MONGODB_USER=admin
+# MONGODB_PASSWORD=your_mongo_password
+# MONGO_HOST=localhost
+# MONGODB_HOST=localhost
+# MONGO_PORT=27017
+# MONGODB_PORT=27017
+# MONGO_DB=myapp
+# MONGODB_DB=myapp
+
+# Docker-специфичные переменные
+# MONGO_INITDB_ROOT_USERNAME=admin
+# MONGO_INITDB_ROOT_PASSWORD=your_mongo_password
+# MONGO_INITDB_DATABASE=myapp
+
+# ==============================================================================
+# Redis
+# ==============================================================================
+# Основные учетные данные
+REDIS_PASSWORD=your_redis_password
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+
+# Альтернативные названия
+# REDIS_AUTH=your_redis_password
+# REDIS_REQUIREPASS=your_redis_password
+# CACHE_PASSWORD=your_redis_password
+
+# ==============================================================================
+# Connection Strings (альтернативный способ настройки)
+# ==============================================================================
+# DATABASE_URL=postgresql://user:password@localhost:5432/database
+# DB_URL=mysql://root:password@localhost:3306/myapp
+# MONGO_URL=mongodb://admin:password@localhost:27017/app
+# CONNECTION_STRING=Server=localhost;Database=myapp;User Id=sa;Password=pass;
+
+# ==============================================================================
+# Google Drive API (для загрузки резервных копий)
+# ==============================================================================
+# ID папки на Google Drive для загрузки резервных копий
+DRIVE_FOLDER_ID=your_google_drive_folder_id
+
+# ==============================================================================
+# Настройки резервного копирования
+# ==============================================================================
+# Локальная папка для резервных копий (по умолчанию: ./backups)
+BACKUP_DIR=./backups
+
+# Количество дней хранения локальных резервных копий (по умолчанию: 7)
+# BACKUP_RETENTION_DAYS=7
+
+# Уровень логирования: DEBUG, INFO, WARNING, ERROR (по умолчанию: INFO)
+# LOG_LEVEL=INFO
+
+# ==============================================================================
+# Примечания:
+# ==============================================================================
+# 1. DumpItAll автоматически сканирует весь VPS для поиска .env файлов
+# 2. Поддерживаются файлы: .env, docker-compose.yml, wp-config.php, settings.py
+# 3. Если пароль не задан, приложение попытается подключиться без аутентификации
+# 4. Для PostgreSQL используйте PGPASSWORD или POSTGRES_PASSWORD
+# 5. Для MySQL используйте MYSQL_PASSWORD или MYSQL_ROOT_PASSWORD
+# 6. Для MongoDB укажите MONGO_USER и MONGO_PASSWORD
+# 7. Для Redis укажите REDIS_PASSWORD (если требуется)
+# 8. Используйте команду --setup-auth для автоматической настройки файлов аутентификации
+# ==============================================================================

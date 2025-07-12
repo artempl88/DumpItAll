@@ -96,6 +96,442 @@ def print_logo():
     print("🔍 Find It, Dump It, Save It!")
     print("=" * 88)
 
+class AuthSetup:
+    """Класс для настройки автоматической аутентификации БД"""
+    def __init__(self):
+        self.home_dir = Path.home()
+        self.env_file = '.env'
+        self.credentials = {}
+        
+    def load_env_file(self):
+        """Загрузка учетных данных из .env файла"""
+        if not os.path.exists(self.env_file):
+            logging.error(f"Файл {self.env_file} не найден")
+            logging.info("Создайте файл .env с учетными данными:")
+            print("""
+# PostgreSQL
+PGPASSWORD=your_postgres_password
+
+# MySQL
+MYSQL_ROOT_PASSWORD=your_mysql_password
+
+# MongoDB
+MONGO_USER=admin
+MONGO_PASSWORD=your_mongo_password
+
+# Redis
+REDIS_PASSWORD=your_redis_password
+""")
+            return False
+            
+        logging.info(f"📄 Загрузка конфигурации из {self.env_file}")
+        
+        try:
+            with open(self.env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if '=' in line and not line.startswith('#'):
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip().strip('"\'')
+                        
+                        if value:  # Только если значение не пустое
+                            os.environ[key] = value
+                            self.credentials[key] = value
+                            
+            return True
+        except Exception as e:
+            logging.error(f"Ошибка чтения .env файла: {e}")
+            return False
+    
+    def setup_postgresql_auth(self):
+        """Настройка аутентификации PostgreSQL через .pgpass"""
+        logging.info("🐘 Настройка PostgreSQL аутентификации...")
+        
+        pgpass_file = self.home_dir / '.pgpass'
+        
+        # Получаем учетные данные
+        password = (self.credentials.get('PGPASSWORD') or 
+                   self.credentials.get('POSTGRES_PASSWORD') or 
+                   os.environ.get('PGPASSWORD') or 
+                   os.environ.get('POSTGRES_PASSWORD'))
+        
+        if not password:
+            logging.warning("⚠️ PostgreSQL пароль не найден в .env файле")
+            return False
+            
+        user = (self.credentials.get('POSTGRES_USER') or 
+               self.credentials.get('PGUSER') or 
+               os.environ.get('POSTGRES_USER') or 
+               os.environ.get('PGUSER') or 
+               'postgres')
+        
+        # Создаем содержимое .pgpass
+        pgpass_content = f"""# PostgreSQL password file
+# hostname:port:database:username:password
+localhost:5432:*:{user}:{password}
+127.0.0.1:5432:*:{user}:{password}
+*:5432:*:{user}:{password}
+"""
+        
+        try:
+            # Создаем резервную копию если файл существует
+            if pgpass_file.exists():
+                backup_file = pgpass_file.with_suffix('.backup')
+                import shutil
+                shutil.copy2(pgpass_file, backup_file)
+                logging.info(f"📋 Создана резервная копия: {backup_file}")
+            
+            # Записываем новый файл
+            with open(pgpass_file, 'w') as f:
+                f.write(pgpass_content)
+            
+            # Устанавливаем права доступа 600
+            import stat
+            os.chmod(pgpass_file, stat.S_IRUSR | stat.S_IWUSR)
+            
+            logging.info(f"✅ Создан файл {pgpass_file} с правами 600")
+            
+            # Тестируем подключение
+            self._test_postgresql_connection(user)
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Ошибка создания .pgpass: {e}")
+            return False
+    
+    def setup_mysql_auth(self):
+        """Настройка аутентификации MySQL через .my.cnf"""
+        logging.info("🐬 Настройка MySQL аутентификации...")
+        
+        mycnf_file = self.home_dir / '.my.cnf'
+        
+        # Получаем учетные данные
+        password = (self.credentials.get('MYSQL_ROOT_PASSWORD') or 
+                   self.credentials.get('MYSQL_PASSWORD') or 
+                   os.environ.get('MYSQL_ROOT_PASSWORD') or 
+                   os.environ.get('MYSQL_PASSWORD'))
+        
+        if not password:
+            logging.warning("⚠️ MySQL пароль не найден в .env файле")
+            return False
+            
+        user = (self.credentials.get('MYSQL_USER') or 
+               self.credentials.get('MYSQL_ROOT_USER') or 
+               os.environ.get('MYSQL_USER') or 
+               os.environ.get('MYSQL_ROOT_USER') or 
+               'root')
+        
+        host = (self.credentials.get('MYSQL_HOST') or 
+               os.environ.get('MYSQL_HOST') or 
+               'localhost')
+        
+        port = (self.credentials.get('MYSQL_PORT') or 
+               os.environ.get('MYSQL_PORT') or 
+               '3306')
+        
+        # Создаем содержимое .my.cnf
+        mycnf_content = f"""# MySQL client configuration
+[client]
+user={user}
+password={password}
+host={host}
+port={port}
+
+[mysql]
+user={user}
+password={password}
+
+[mysqldump]
+user={user}
+password={password}
+
+[mysqlcheck]
+user={user}
+password={password}
+
+[mysqlshow]
+user={user}
+password={password}
+"""
+        
+        try:
+            # Создаем резервную копию если файл существует
+            if mycnf_file.exists():
+                backup_file = mycnf_file.with_suffix('.backup')
+                import shutil
+                shutil.copy2(mycnf_file, backup_file)
+                logging.info(f"📋 Создана резервная копия: {backup_file}")
+            
+            # Записываем новый файл
+            with open(mycnf_file, 'w') as f:
+                f.write(mycnf_content)
+            
+            # Устанавливаем права доступа 600
+            import stat
+            os.chmod(mycnf_file, stat.S_IRUSR | stat.S_IWUSR)
+            
+            logging.info(f"✅ Создан файл {mycnf_file} с правами 600")
+            
+            # Тестируем подключение
+            self._test_mysql_connection()
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Ошибка создания .my.cnf: {e}")
+            return False
+    
+    def setup_mongodb_auth(self):
+        """Настройка аутентификации MongoDB через .mongorc.js"""
+        logging.info("🍃 Настройка MongoDB аутентификации...")
+        
+        mongorc_file = self.home_dir / '.mongorc.js'
+        
+        # Получаем учетные данные
+        user = (self.credentials.get('MONGO_USER') or 
+               self.credentials.get('MONGODB_USER') or 
+               os.environ.get('MONGO_USER') or 
+               os.environ.get('MONGODB_USER') or 
+               'admin')
+        
+        password = (self.credentials.get('MONGO_PASSWORD') or 
+                   self.credentials.get('MONGODB_PASSWORD') or 
+                   os.environ.get('MONGO_PASSWORD') or 
+                   os.environ.get('MONGODB_PASSWORD'))
+        
+        if not password:
+            logging.warning("⚠️ MongoDB пароль не найден в .env файле")
+            return False
+            
+        host = (self.credentials.get('MONGO_HOST') or 
+               self.credentials.get('MONGODB_HOST') or 
+               os.environ.get('MONGO_HOST') or 
+               os.environ.get('MONGODB_HOST') or 
+               'localhost')
+        
+        port = (self.credentials.get('MONGO_PORT') or 
+               self.credentials.get('MONGODB_PORT') or 
+               os.environ.get('MONGO_PORT') or 
+               os.environ.get('MONGODB_PORT') or 
+               '27017')
+        
+        # Создаем содержимое .mongorc.js
+        mongorc_content = f"""// MongoDB authentication configuration
+var mongoUser = '{user}';
+var mongoPassword = '{password}';
+var mongoHost = '{host}';
+var mongoPort = {port};
+
+function autoAuth() {{
+    try {{
+        db = db.getSiblingDB('admin');
+        db.auth(mongoUser, mongoPassword);
+        print('✅ MongoDB аутентификация успешна');
+    }} catch (e) {{
+        print('⚠️ MongoDB аутентификация не удалась: ' + e);
+    }}
+}}
+
+// Автоматическая аутентификация при подключении
+if (typeof db !== 'undefined') {{
+    autoAuth();
+}}
+"""
+        
+        try:
+            # Создаем резервную копию если файл существует
+            if mongorc_file.exists():
+                backup_file = mongorc_file.with_suffix('.backup')
+                import shutil
+                shutil.copy2(mongorc_file, backup_file)
+                logging.info(f"📋 Создана резервная копия: {backup_file}")
+            
+            # Записываем новый файл
+            with open(mongorc_file, 'w') as f:
+                f.write(mongorc_content)
+            
+            # Устанавливаем права доступа 600
+            import stat
+            os.chmod(mongorc_file, stat.S_IRUSR | stat.S_IWUSR)
+            
+            logging.info(f"✅ Создан файл {mongorc_file} с правами 600")
+            
+            # Тестируем подключение
+            self._test_mongodb_connection(user, password, host, port)
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Ошибка создания .mongorc.js: {e}")
+            return False
+    
+    def setup_redis_auth(self):
+        """Настройка аутентификации Redis через .rediscli_auth"""
+        logging.info("🔴 Настройка Redis аутентификации...")
+        
+        rediscli_file = self.home_dir / '.rediscli_auth'
+        
+        # Получаем учетные данные
+        password = (self.credentials.get('REDIS_PASSWORD') or 
+                   os.environ.get('REDIS_PASSWORD'))
+        
+        if not password:
+            logging.warning("⚠️ Redis пароль не найден в .env файле")
+            return False
+        
+        try:
+            # Создаем резервную копию если файл существует
+            if rediscli_file.exists():
+                backup_file = rediscli_file.with_suffix('.backup')
+                import shutil
+                shutil.copy2(rediscli_file, backup_file)
+                logging.info(f"📋 Создана резервная копия: {backup_file}")
+            
+            # Записываем пароль в файл
+            with open(rediscli_file, 'w') as f:
+                f.write(password)
+            
+            # Устанавливаем права доступа 600
+            import stat
+            os.chmod(rediscli_file, stat.S_IRUSR | stat.S_IWUSR)
+            
+            logging.info(f"✅ Создан файл {rediscli_file} с правами 600")
+            
+            # Настройка переменной окружения для redis-cli
+            os.environ['REDISCLI_AUTH'] = password
+            
+            # Тестируем подключение
+            self._test_redis_connection(password)
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Ошибка создания .rediscli_auth: {e}")
+            return False
+    
+    def _test_postgresql_connection(self, user='postgres'):
+        """Тест подключения к PostgreSQL"""
+        try:
+            cmd = ['psql', '-h', 'localhost', '-U', user, '-d', 'template1', '-c', '\\l', '-t']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                logging.info("✅ PostgreSQL: подключение успешно (без ввода пароля)")
+                return True
+            else:
+                logging.warning("⚠️ PostgreSQL: не удалось подключиться автоматически")
+                return False
+                
+        except Exception as e:
+            logging.error(f"❌ Ошибка тестирования PostgreSQL: {e}")
+            return False
+    
+    def _test_mysql_connection(self):
+        """Тест подключения к MySQL"""
+        try:
+            cmd = ['mysql', '-e', 'SELECT VERSION();']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                logging.info("✅ MySQL: подключение успешно (без ввода пароля)")
+                return True
+            else:
+                logging.warning("⚠️ MySQL: не удалось подключиться автоматически")
+                return False
+                
+        except Exception as e:
+            logging.error(f"❌ Ошибка тестирования MySQL: {e}")
+            return False
+    
+    def _test_mongodb_connection(self, user, password, host, port):
+        """Тест подключения к MongoDB"""
+        try:
+            cmd = ['mongo', '--host', f"{host}:{port}", '--username', user, 
+                   '--password', password, '--eval', 'db.version()', '--quiet']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                logging.info("✅ MongoDB: подключение успешно")
+                return True
+            else:
+                logging.warning("⚠️ MongoDB: не удалось подключиться")
+                return False
+                
+        except Exception as e:
+            logging.error(f"❌ Ошибка тестирования MongoDB: {e}")
+            return False
+    
+    def _test_redis_connection(self, password):
+        """Тест подключения к Redis"""
+        try:
+            cmd = ['redis-cli', '-a', password, 'ping']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0 and 'PONG' in result.stdout:
+                logging.info("✅ Redis: подключение успешно")
+                return True
+            else:
+                logging.warning("⚠️ Redis: не удалось подключиться")
+                return False
+                
+        except Exception as e:
+            logging.error(f"❌ Ошибка тестирования Redis: {e}")
+            return False
+    
+    def run(self):
+        """Основной процесс настройки"""
+        print("\n🔐 DumpItAll - Настройка автоматической аутентификации")
+        print("=" * 60)
+        
+        # Загрузка конфигурации
+        if not self.load_env_file():
+            return
+        
+        # Настройка каждой СУБД
+        print("\n🚀 Начинаем настройку...\n")
+        
+        self.setup_postgresql_auth()
+        self.setup_mysql_auth()
+        self.setup_mongodb_auth()
+        self.setup_redis_auth()
+        
+        # Итоговая информация
+        print("\n" + "=" * 60)
+        print("📊 ИТОГИ НАСТРОЙКИ АУТЕНТИФИКАЦИИ")
+        print("=" * 60)
+        
+        files = [
+            ('~/.pgpass', 'PostgreSQL'),
+            ('~/.my.cnf', 'MySQL'),
+            ('~/.mongorc.js', 'MongoDB'),
+            ('~/.rediscli_auth', 'Redis')
+        ]
+        
+        for file_path, db_name in files:
+            full_path = Path.home() / file_path[2:]  # Убираем ~/
+            if full_path.exists():
+                print(f"✅ {db_name}: {file_path}")
+            else:
+                print(f"❌ {db_name}: файл не создан")
+        
+        print("\n💡 Полезные команды:")
+        print("  psql -l                    # Список БД PostgreSQL")
+        print("  mysql -e 'SHOW DATABASES;' # Список БД MySQL")
+        print("  mongo --eval 'db.version()' # Версия MongoDB")
+        print("  redis-cli ping             # Проверка Redis")
+        
+        print("\n🔐 Безопасность:")
+        print("  - Все файлы созданы с правами 600 (только для владельца)")
+        print("  - Резервные копии сохранены с расширением .backup")
+        print("  - Пароли взяты из .env файла")
+        
+        print("\n🚀 Теперь можно запустить резервное копирование:")
+        print("  python3 backup_script.py --backup-once")
+        print("=" * 60)
+
+
 class UniversalBackup:
     def __init__(self):
         # Настройки Google Drive
@@ -2304,6 +2740,8 @@ def main():
                        help='Однократное резервное копирование без планировщика')
     parser.add_argument('--daemon', action='store_true',
                        help='Запуск в режиме демона с планировщиком')
+    parser.add_argument('--setup-auth', action='store_true',
+                       help='Настройка файлов автоматической аутентификации для БД')
     parser.add_argument('--interval', type=int, default=30,
                        help='Интервал резервного копирования в минутах (по умолчанию: 30)')
     parser.add_argument('--config', type=str, default='.env',
@@ -2320,6 +2758,14 @@ def main():
     if os.path.exists(args.config):
         from dotenv import load_dotenv
         load_dotenv(args.config)
+    
+    # Обработка команды --setup-auth
+    if args.setup_auth:
+        logging.info("🔐 Режим: настройка автоматической аутентификации")
+        auth_setup = AuthSetup()
+        auth_setup.env_file = args.config
+        auth_setup.run()
+        return
     
     backup_manager = UniversalBackup()
     
