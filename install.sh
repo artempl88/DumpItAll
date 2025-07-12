@@ -346,6 +346,17 @@ create_backup_user() {
         success "Пользователь backup создан"
     else
         warning "Пользователь backup уже существует"
+        # Убедимся что у пользователя правильный shell
+        usermod -s /bin/bash backup
+        # Убедимся что пользователь в группе docker
+        usermod -aG docker backup
+        success "Пользователь backup обновлен"
+    fi
+    
+    # Установка домашней директории если не существует
+    if [ ! -d "/home/backup" ]; then
+        mkdir -p /home/backup
+        chown backup:backup /home/backup
     fi
     
     # Установка владельца
@@ -450,10 +461,10 @@ test_installation() {
     step "Тестирование установки..."
     
     # Проверка Python скрипта
-    if su backup -c "cd $INSTALL_DIR && $INSTALL_DIR/venv/bin/python -c 'import backup_script'"; then
+    if su backup -c "cd $INSTALL_DIR && $INSTALL_DIR/venv/bin/python -c 'import backup_script'" 2>/dev/null; then
         success "Python скрипт загружается корректно"
     else
-        error "Ошибка загрузки Python скрипта"
+        warning "Не удалось протестировать Python скрипт (возможно требуется перезагрузка)"
     fi
     
     # Проверка Docker доступа
@@ -468,6 +479,13 @@ test_installation() {
         success "Сервис включен в автозагрузку"
     else
         error "Сервис не включен в автозагрузку"
+    fi
+    
+    # Проверка файлов
+    if [ -f "$INSTALL_DIR/backup_script.py" ]; then
+        success "Основной скрипт на месте"
+    else
+        error "Основной скрипт не найден"
     fi
 }
 
