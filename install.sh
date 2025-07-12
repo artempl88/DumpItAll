@@ -92,6 +92,48 @@ EOF
     success "Репозиторий MongoDB настроен"
 }
 
+# Проверка и установка Docker
+setup_docker_packages() {
+    step "Проверка и установка Docker..."
+    
+    # Проверяем, установлен ли уже Docker
+    if command -v docker &> /dev/null; then
+        info "Docker уже установлен: $(docker --version)"
+        return 0
+    fi
+    
+    case $OS in
+        *"Ubuntu"*|*"Debian"*)
+            # Попытка установить docker.io из Ubuntu репозитория
+            if apt-get install -y docker.io; then
+                success "Docker установлен из Ubuntu репозитория"
+            else
+                warning "Не удалось установить docker.io, пытаемся установить из официального репозитория Docker"
+                
+                # Установка Docker из официального репозитория
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+                    gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+                    tee /etc/apt/sources.list.d/docker.list > /dev/null
+                
+                apt-get update
+                apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+                
+                success "Docker установлен из официального репозитория"
+            fi
+            ;;
+        *"CentOS"*|*"Red Hat"*|*"Rocky"*|*"AlmaLinux"*)
+            # Для CentOS/RHEL используем официальный репозиторий
+            yum install -y yum-utils
+            yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            ;;
+    esac
+    
+    success "Docker настроен"
+}
+
 # Установка базовых пакетов
 install_base_packages() {
     step "Установка базовых пакетов..."
@@ -109,10 +151,13 @@ install_base_packages() {
                 postgresql-client \
                 mysql-client \
                 redis-tools \
-                docker.io \
                 systemd \
                 jq \
-                gnupg
+                gnupg \
+                lsb-release
+            
+            # Установка Docker отдельно с обработкой конфликтов
+            setup_docker_packages
             
             # Установка MongoDB клиентов из официального репозитория
             setup_mongodb_repo
@@ -131,9 +176,12 @@ install_base_packages() {
                 postgresql \
                 mysql \
                 redis \
-                docker \
                 systemd \
-                jq
+                jq \
+                yum-utils
+            
+            # Установка Docker отдельно
+            setup_docker_packages
             
             # Установка MongoDB клиентов
             setup_mongodb_repo
@@ -279,13 +327,25 @@ create_backup_user() {
 setup_docker() {
     step "Настройка Docker..."
     
+    # Проверяем что Docker установлен
+    if ! command -v docker &> /dev/null; then
+        error "Docker не установлен, но требуется для работы системы"
+        exit 1
+    fi
+    
+    # Запуск и включение Docker сервиса
     systemctl enable docker
     systemctl start docker
     
     # Добавление пользователя backup в группу docker
     usermod -aG docker backup
     
-    success "Docker настроен"
+    # Проверка что Docker работает
+    if docker info &> /dev/null; then
+        success "Docker запущен и работает"
+    else
+        warning "Docker установлен, но не запущен или есть проблемы с правами"
+    fi
 }
 
 # Настройка баз данных
