@@ -33,7 +33,7 @@ DumpItAll - это универсальная система резервног�
 
 ### 1. Установка
 ```bash
-git clone https://github.com/your-username/DumpItAll.git
+git clone https://github.com/artempl88/DumpItAll.git
 cd DumpItAll
 pip install -r requirements.txt
 ```
